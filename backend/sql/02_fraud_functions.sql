@@ -212,7 +212,7 @@ BEGIN
         JOIN cards c2 ON c1.last_four = c2.last_four
         WHERE c1.user_id != c2.user_id
     ),
-    graph_search(start_user, current_user, path) AS (
+    graph_search(start_user, curr_user, path) AS (
         -- Base Case: Seed recursion with all users who have at least one link
         SELECT DISTINCT user_a, user_a, ARRAY[user_a]
         FROM bidirectional_links
@@ -222,15 +222,15 @@ BEGIN
         -- Recursive Step: Traverse to unvisited neighbors to build connected component
         SELECT gs.start_user, bl.user_b, gs.path || bl.user_b
         FROM graph_search gs
-        JOIN bidirectional_links bl ON gs.current_user = bl.user_a
+        JOIN bidirectional_links bl ON gs.curr_user = bl.user_a
         WHERE NOT (bl.user_b = ANY(gs.path))
     ),
     user_components AS (
         -- Group by starting user to aggregate all nodes reachable from them
         SELECT 
             start_user,
-            MIN(current_user) AS min_member_id, -- Represents the unique ring identifier
-            ARRAY_AGG(DISTINCT current_user) AS members
+            MIN(curr_user) AS min_member_id, -- Represents the unique ring identifier
+            ARRAY_AGG(DISTINCT curr_user) AS members
         FROM graph_search
         GROUP BY start_user
     ),
@@ -308,7 +308,7 @@ BEGIN
         JOIN cards c2 ON c1.last_four = c2.last_four
         WHERE c1.user_id != c2.user_id
     ),
-    graph_search(current_user, path) AS (
+    graph_search(curr_user, path) AS (
         -- Base Case: Start only at the target user
         SELECT p_user_id, ARRAY[p_user_id]
 
@@ -317,11 +317,11 @@ BEGIN
         -- Recursive Step: Find neighbors of visited nodes
         SELECT bl.user_b, gs.path || bl.user_b
         FROM graph_search gs
-        JOIN bidirectional_links bl ON gs.current_user = bl.user_a
+        JOIN bidirectional_links bl ON gs.curr_user = bl.user_a
         WHERE NOT (bl.user_b = ANY(gs.path))
     )
     SELECT 
-        ARRAY_AGG(DISTINCT current_user)
+        ARRAY_AGG(DISTINCT curr_user)
     INTO v_members
     FROM graph_search;
 

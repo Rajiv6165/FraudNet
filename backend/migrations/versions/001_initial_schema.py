@@ -73,7 +73,7 @@ def upgrade() -> None:
     
     op.create_foreign_key('fk_transactions_user_id', 'transactions', 'users', ['user_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key('fk_transactions_card_id', 'transactions', 'cards', ['card_id'], ['id'], ondelete='CASCADE')
-    op.create_foreign_key('fk_transactions_device_id', 'transactions', 'devices', ['device_id'])
+    op.create_foreign_key('fk_transactions_device_id', 'transactions', 'devices', ['device_id'], ['id'])
 
     # 5. Create fraud_scores table
     op.create_table(

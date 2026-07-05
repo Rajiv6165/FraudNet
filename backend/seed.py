@@ -116,6 +116,11 @@ def seed_db():
     )
     db.commit()
 
+    # Reset sequences for serial columns after bulk insert
+    db.execute(text("SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 1), true)"))
+    db.execute(text("SELECT setval('cards_id_seq', COALESCE((SELECT MAX(id) FROM cards), 1), true)"))
+    db.commit()
+
     # Keep track of card details for sharing in fraud rings
     card_last_fours = {c['id']: c['last_four'] for c in card_insert_data}
 
