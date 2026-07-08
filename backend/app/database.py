@@ -4,7 +4,12 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import create_engine
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5433/fraudnet")
+if DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+asyncpg://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 SYNC_DATABASE_URL = os.getenv("SYNC_DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/fraudnet")
+if SYNC_DATABASE_URL.startswith("postgresql+asyncpg://"):
+    SYNC_DATABASE_URL = SYNC_DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 # Async engine for FastAPI
 async_engine = create_async_engine(DATABASE_URL, echo=False)

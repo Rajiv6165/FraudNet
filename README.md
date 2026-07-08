@@ -1,8 +1,8 @@
 # FraudNet 🛡️ — SQL-Native Real-Time Fraud Detection Engine
 
-FraudNet is an enterprise-grade real-time financial fraud detection system where the core detection intelligence is executed **entirely inside PostgreSQL 16 (PL/pgSQL)** using triggers, advanced window functions, and recursive Common Table Expressions (CTEs). 
+FraudNet is an enterprise-grade, real-time financial fraud detection system. The core detection intelligence is executed **entirely inside PostgreSQL 16 (PL/pgSQL)** using triggers, advanced window functions, and recursive Common Table Expressions (CTEs). 
 
-FastAPI serves as a thin ingestion shell that acts as an asynchronous WebSocket bridge, forwarding events to a React dashboard.
+FastAPI serves as a thin ingestion shell that acts as an asynchronous WebSocket bridge, forwarding database events immediately to a modern React dashboard.
 
 ---
 
@@ -34,124 +34,146 @@ graph TD
 
 ## ⚡ Why SQL-Native? (The Design Tradeoff)
 
-Traditional architectures process fraud logic in application services (e.g., Python/Go workers). FraudNet moves this calculation directly to the **PostgreSQL storage layer**.
+Traditional architectures process fraud logic in application services (e.g., Python or Go worker threads). FraudNet moves this calculation directly to the **PostgreSQL storage layer**.
 
 ### Advantages:
-1. **Zero Network Round-Trips**: Computing rolling counts, user baselines, and network graphs in python requires fetching hundreds of historic records per transaction. In SQL, this data is already in memory.
-2. **Strict Transaction Isolation & Atomicity**: The score is computed *before* the transaction is fully committed. There is no race condition where a high-velocity attack can slip through in a split-second window before a Python background worker processes it.
-3. **Database-enforced Integrity**: Fraud scores and flagged alerts are generated deterministically for every transaction, regardless of which client or API ingested it.
+1. **Zero Network Round-Trips**: Computing rolling counts, user baselines, and network graphs in application logic requires fetching hundreds of historic records per transaction. In SQL, this data is processed where it resides in memory.
+2. **Strict Transaction Isolation & Atomicity**: The score is computed *before* the transaction is fully committed. This prevents race conditions where a high-velocity attack could slip through in a split-second window before a background worker processes it.
+3. **Database-Enforced Integrity**: Fraud scores and flagged alerts are generated deterministically for every transaction, regardless of which client, API, or service ingested it.
 
 ### Tradeoffs:
-* **Horizontal Scaling Constraints**: CPU scaling is shifted to PostgreSQL. Sharding or read-replicas are required if the database becomes a bottleneck.
-* **Logic Portability**: Migrating from PostgreSQL to Spanner or BigQuery would require rewriting the PL/pgSQL procedures.
+- **Horizontal Scaling Constraints**: CPU scaling is shifted to PostgreSQL. Replication or horizontal partitioning is required if the database becomes a write bottleneck.
+- **Logic Portability**: Migrating database engines would require rewriting the PL/pgSQL procedures.
 
 ---
 
-## 🕸️ Recursive CTE Fraud Ring Tracing Explained
+## 🕸️ The Recursive CTE Fraud Ring Bug (An Engineering Story)
 
 The centerpiece of FraudNet is its graph-based fraud ring discovery logic. A fraud ring is a cluster of users linked by shared attributes: same `device_id`, same `ip_address`, or credit cards sharing the same `last_four` digits.
 
-### The Recursive Algorithm (`detect_fraud_rings()`)
-
+### The Problem: Exponential Path Explosion
+Initially, the recursive CTE in `detect_fraud_rings()` was implemented using a `UNION ALL` statement with cycle prevention using a path-tracking array:
 ```sql
-WITH RECURSIVE bidirectional_links AS (
-    -- Link users sharing device fingerprints
-    SELECT DISTINCT t1.user_id AS user_a, t2.user_id AS user_b
-    FROM transactions t1
-    JOIN transactions t2 ON t1.device_id = t2.device_id WHERE t1.user_id != t2.user_id
-    UNION
-    -- Link users sharing IP addresses
-    SELECT DISTINCT t1.user_id AS user_a, t2.user_id AS user_b
-    FROM transactions t1
-    JOIN transactions t2 ON t1.ip_address = t2.ip_address WHERE t1.user_id != t2.user_id
-    UNION
-    -- Link users sharing credit cards with identical last 4 digits
-    SELECT DISTINCT c1.user_id AS user_a, c2.user_id AS user_b
-    FROM cards c1
-    JOIN cards c2 ON c1.last_four = c2.last_four WHERE c1.user_id != c2.user_id
-),
-graph_search(start_user, current_user, path) AS (
-    -- Base Case: Seed path with all starting vertices (users)
+graph_search(start_user, curr_user, path) AS (
     SELECT DISTINCT user_a, user_a, ARRAY[user_a] FROM bidirectional_links
     UNION ALL
-    -- Recursive Step: Join back to links to walk outward to unvisited neighbors
     SELECT gs.start_user, bl.user_b, gs.path || bl.user_b
     FROM graph_search gs
-    JOIN bidirectional_links bl ON gs.current_user = bl.user_a
-    WHERE NOT (bl.user_b = ANY(gs.path)) -- Cycle prevention check
+    JOIN bidirectional_links bl ON gs.curr_user = bl.user_a
+    WHERE NOT (bl.user_b = ANY(gs.path))
 )
-...
 ```
+While this successfully prevented infinite loops, `UNION ALL` forces the database to traverse **every possible simple path** within a connected component. When the database was populated with the seed dataset (15,000+ transactions), random attribute overlaps created connected components of size up to 69 nodes. Tracing all simple paths in a 69-node dense subgraph is computationally intractable, causing the global query to hang indefinitely.
 
-### Worked Trace Example
+### The Fix: Linear Connected Components via `UNION`
+We replaced `UNION ALL` with **`UNION`** and removed the path-tracking array:
+```sql
+graph_search(start_user, curr_user) AS (
+    SELECT DISTINCT user_a, user_a FROM bidirectional_links
+    UNION
+    SELECT gs.start_user, bl.user_b
+    FROM graph_search gs
+    JOIN bidirectional_links bl ON gs.curr_user = bl.user_a
+)
+```
+In SQL recursive CTEs, `UNION` automatically discards duplicate rows `(start_user, curr_user)` from the working stack at each step. This naturally guarantees that each reachable node is only traversed once per starting vertex, reducing the complexity from exponential $O(2^V)$ to linear $O(V + E)$ BFS traversal.
 
-Suppose we have the following relationships in our database:
-* **User 1** transacts on `dev_A`
-* **User 2** transacts on `dev_A` and from `192.168.1.1`
-* **User 3** transacts from `192.168.1.1`
-* **User 4** shares a card `last_four` (`4321`) with **User 3**, but uses `dev_B` (User 4 is connected to User 3, which connects them to User 2 and User 1).
-
-The links will be populated as:
-* `1-2` (via device `dev_A`)
-* `2-3` (via IP `192.168.1.1`)
-* `3-4` (via card last 4 `4321`)
-
-Here is how the Recursive CTE evaluates the component starting from **User 1**:
-
-1. **Iteration 0 (Base Case)**:
-   * Path: `ARRAY[1]`, `current_user = 1`.
-2. **Iteration 1**:
-   * Finds neighbor `2` from `bidirectional_links`.
-   * Checks if `2` is in path `[1]`. (No).
-   * Path becomes `[1, 2]`, `current_user = 2`.
-3. **Iteration 2**:
-   * Finds neighbors of `2`: `1` and `3`.
-   * Checks `1` in path `[1, 2]` (Yes - rejected to prevent infinite loop).
-   * Checks `3` in path `[1, 2]` (No - accepted).
-   * Path becomes `[1, 2, 3]`, `current_user = 3`.
-4. **Iteration 3**:
-   * Finds neighbors of `3`: `2` and `4`.
-   * Checks `2` in path `[1, 2, 3]` (Yes - rejected).
-   * Checks `4` in path `[1, 2, 3]` (No - accepted).
-   * Path becomes `[1, 2, 3, 4]`, `current_user = 4`.
-5. **Iteration 4**:
-   * Finds neighbors of `4`: `3`.
-   * Checks `3` in path `[1, 2, 3, 4]` (Yes - rejected).
-   * No further expansion possible. Recursion terminates.
-6. **Aggregation**:
-   * For start user `1`, the set of all visited `current_user` nodes is collected: `[1, 2, 3, 4]`.
-   * The minimum user ID `1` is selected as the unique `ring_id` (`ring_1`).
-   * Ring size = `4`.
-   * Ring volume = Sum of all transactions from users 1, 2, 3, and 4.
+- **Global CTE Query Time**: Reduced from **indefinite hang** to **~6.0 seconds** over 15,000+ transactions.
+- **User-Specific CTE Trigger Time**: Reduced to **~0.06 seconds**, keeping transaction commit times fast.
 
 ---
 
-## 🚀 Running the Project
+## 🚀 Local Quickstart
 
 ### Prerequisites
 Make sure you have **Docker Desktop** installed and running on your system.
 
-### Step 1: Clone and Spin Up Containers
+### Step 1: Spin Up Containers
 ```bash
 # Clone the repository
-git clone <repository_url> fraudnet
+git clone https://github.com/Rajiv6165/FraudNet.git
 cd fraudnet
 
-# Build and start services (database, backend api, react frontend)
+# Build and start services (database, backend API, React frontend)
 docker compose up -d --build
 ```
 
-### Step 2: Seed the Database
+### Step 2: Run Migrations and Seed Data
 ```bash
-# Execute Alembic migrations to construct database and apply trigger SQL
+# Execute Alembic migrations to apply schemas, functions, and triggers
 docker compose exec backend alembic upgrade head
 
-# Run seed.py to populate 5,000+ users, 15,000+ transactions, and planted fraud rings
+# Run seed script to generate 15,000+ mock transactions
 docker compose exec backend python seed.py
 ```
 
-### Step 3: Access the Dashboards
-* **React Dashboard**: Open `http://localhost:5173`
-* **FastAPI interactive docs**: Open `http://localhost:8000/docs`
+### Step 3: Access Dashboards
+- **React Dashboard**: Open [http://localhost:5173](http://localhost:5173)
+- **FastAPI docs**: Open [http://localhost:8000/docs](http://localhost:8000/docs)
 
-Click the **Replay Attack Simulator** button on the React dashboard to stream synthetic live transactions and observe real-time triggers mapping threats visually.
+---
+
+## ☁️ Production Deployment Guide
+
+### Part 1: Backend + Database on Render
+
+Render Blueprints allow deploying the database and FastAPI service concurrently. We have defined a `render.yaml` configuration at the root of the project.
+
+#### Steps to Deploy via Render Dashboard:
+1. Push your repository to GitHub.
+2. Log in to the [Render Dashboard](https://dashboard.render.com/).
+3. Click **New** -> **Blueprint**.
+4. Connect your GitHub repository.
+5. Render will automatically parse the `render.yaml` file. Review the service configurations:
+   - **Postgres Database**: Render will spin up a free-tier database named `fraudnet-db`.
+   - **Web Service**: Render will compile the python requirements, run `alembic upgrade head` to configure tables, triggers, and functions, and start the uvicorn service.
+6. Click **Apply**.
+7. Copy the public **Web Service URL** (e.g. `https://fraudnet-backend.onrender.com`).
+
+*Note: Render supports WebSockets natively. Since the simulator frequently pushes transactions, the connection is kept alive natively. In addition, the FastAPI application implements CORS origins parsing from the `ALLOWED_ORIGINS` environment variable.*
+
+---
+
+### Part 2: Frontend on Vercel
+
+The React application is built using Vite and ready to be hosted as a static site on Vercel.
+
+#### Steps to Deploy via Vercel Dashboard:
+1. Log in to [Vercel](https://vercel.com).
+2. Click **Add New** -> **Project**.
+3. Select your GitHub repository.
+4. Configure the **Build & Development Settings**:
+   - **Framework Preset**: `Vite` (Vercel auto-detects this).
+   - **Root Directory**: `frontend` (Make sure to set this!).
+5. Add the **Environment Variables**:
+   - Key: `VITE_API_URL`
+   - Value: `https://your-backend-render-url.onrender.com` (use the Render Web Service URL copied in the previous step).
+6. Click **Deploy**.
+7. Vercel will host the dashboard (e.g., `https://fraudnet-frontend.vercel.app`).
+8. *(Optional)* Update the backend environment variable `ALLOWED_ORIGINS` in your Render Web Service settings to `https://your-vercel-domain.vercel.app` for strict security instead of `*`.
+
+---
+
+### Part 3: Seed the Production Database
+
+Since the production database starts empty, run the seed script to populate it:
+
+#### Option A: Running inside Render Shell (Recommended)
+1. Go to your Render Web Service dashboard for `fraudnet-backend`.
+2. Click the **Shell** tab on the left sidebar.
+3. Run the following command inside the terminal:
+   ```bash
+   python seed.py
+   ```
+
+#### Option B: Running locally against Render Database
+1. Copy the **External Database URL** from the Render database details panel.
+2. In your local terminal, navigate to the `backend` folder and run:
+   ```bash
+   # On Windows (PowerShell)
+   $env:SYNC_DATABASE_URL="external_db_connection_string"
+   python seed.py
+
+   # On Linux/macOS
+   SYNC_DATABASE_URL="external_db_connection_string" python seed.py
+   ```
