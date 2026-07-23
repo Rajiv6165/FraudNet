@@ -33,10 +33,12 @@ BEGIN
     INTO v_ring_id, v_ring_size, v_ring_volume
     FROM detect_user_fraud_ring(NEW.user_id);
 
-    -- Normalize ring score (larger ring size = higher fraud risk)
-    -- Scaling: size 2 = 0.33, size 3 = 0.5, size 4 = 0.67, size 5+ = 1.0
-    IF v_ring_size IS NOT NULL AND v_ring_size > 1 THEN
-        v_ring_score := LEAST(1.0, v_ring_size::NUMERIC / 5.0);
+    -- Normalize ring score (ring membership is a strong baseline signal)
+    -- Scaling: size 2 = 0.70, size 3 = 0.80, size 4 = 0.90, size 5+ = 1.00
+    IF v_ring_size IS NOT NULL AND v_ring_size >= 2 THEN
+        v_ring_score := LEAST(1.00, 0.70 + ((v_ring_size - 2)::NUMERIC * 0.10));
+    ELSE
+        v_ring_score := 0.00;
     END IF;
 
     -- 4. Calculate Weighted Composite Score

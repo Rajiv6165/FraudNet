@@ -203,14 +203,6 @@ BEGIN
         FROM transactions t1
         JOIN transactions t2 ON t1.ip_address = t2.ip_address
         WHERE t1.user_id != t2.user_id
-
-        UNION
-
-        -- Link 3: Users using credit cards with the same last 4 digits
-        SELECT DISTINCT c1.user_id AS user_a, c2.user_id AS user_b
-        FROM cards c1
-        JOIN cards c2 ON c1.last_four = c2.last_four
-        WHERE c1.user_id != c2.user_id
     ),
     graph_search(start_user, curr_user) AS (
         -- Base Case: Seed recursion with all users who have at least one link
@@ -298,14 +290,6 @@ BEGIN
         FROM transactions t1
         JOIN transactions t2 ON t1.ip_address = t2.ip_address
         WHERE t1.user_id != t2.user_id
-
-        UNION
-
-        -- Shared Card Last 4
-        SELECT DISTINCT c1.user_id AS user_a, c2.user_id AS user_b
-        FROM cards c1
-        JOIN cards c2 ON c1.last_four = c2.last_four
-        WHERE c1.user_id != c2.user_id
     ),
     graph_search(curr_user) AS (
         -- Base Case: Start only at the target user
