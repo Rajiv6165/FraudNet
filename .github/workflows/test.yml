@@ -1,0 +1,59 @@
+name: FraudNet Test Suite
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: fraudnet_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Alembic Migrations
+        env:
+          SYNC_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fraudnet_test
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/fraudnet_test
+        run: |
+          cd backend
+          alembic upgrade head
+
+      - name: Run Pytest Test Suite
+        env:
+          SYNC_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fraudnet_test
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/fraudnet_test
+          JWT_SECRET_KEY: test-secret-key
+          DEMO_USERNAME: admin
+          DEMO_PASSWORD: fraudnet123
+        run: |
+          cd backend
+          pytest tests/ -v
