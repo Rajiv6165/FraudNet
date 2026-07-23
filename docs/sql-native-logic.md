@@ -69,10 +69,6 @@ WITH RECURSIVE bidirectional_links AS (
     SELECT DISTINCT t1.user_id AS user_a, t2.user_id AS user_b
     FROM transactions t1
     JOIN transactions t2 ON t1.ip_address = t2.ip_address WHERE t1.user_id != t2.user_id
-    UNION
-    SELECT DISTINCT c1.user_id AS user_a, c2.user_id AS user_b
-    FROM cards c1
-    JOIN cards c2 ON c1.last_four = c2.last_four WHERE c1.user_id != c2.user_id
 ),
 graph_search(current_user, path) AS (
     SELECT p_user_id, ARRAY[p_user_id]
