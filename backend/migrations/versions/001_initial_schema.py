@@ -49,31 +49,44 @@ def upgrade() -> None:
     op.create_index('idx_cards_last_four', 'cards', ['last_four'])
     op.create_foreign_key('fk_cards_user_id', 'cards', 'users', ['user_id'], ['id'], ondelete='CASCADE')
 
-    # 4. Create transactions table
-    # Make sure gen_random_uuid extension is enabled (in PG 13+ it is built-in but good to have)
+    # 4. Create partitioned transactions table
     op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
-    op.create_table(
-        'transactions',
-        sa.Column('id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False, primary_key=True),
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('card_id', sa.Integer(), nullable=False),
-        sa.Column('device_id', sa.String(length=50), nullable=False),
-        sa.Column('ip_address', sa.String(length=45), nullable=False),
-        sa.Column('amount', sa.Numeric(precision=12, scale=2), nullable=False),
-        sa.Column('merchant', sa.String(length=100), nullable=False),
-        sa.Column('merchant_category', sa.String(length=50), nullable=False),
-        sa.Column('country', sa.String(length=3), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('status', sa.String(length=20), server_default='approved', nullable=False)
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id UUID DEFAULT gen_random_uuid(),
+            user_id INT NOT NULL,
+            card_id INT NOT NULL,
+            device_id VARCHAR(50) NOT NULL,
+            ip_address VARCHAR(45) NOT NULL,
+            amount NUMERIC(12, 2) NOT NULL,
+            merchant VARCHAR(100) NOT NULL,
+            merchant_category VARCHAR(50) NOT NULL,
+            country VARCHAR(3) NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+            status VARCHAR(20) DEFAULT 'approved' NOT NULL,
+            
+            PRIMARY KEY (id, created_at),
+            CONSTRAINT fk_transactions_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_transactions_card_id FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE,
+            CONSTRAINT fk_transactions_device_id FOREIGN KEY (device_id) REFERENCES devices(id)
+        ) PARTITION BY RANGE (created_at);
+    """)
+
+    # Monthly Range Partitions
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_05 PARTITION OF transactions FOR VALUES FROM ('2026-05-01 00:00:00+00') TO ('2026-06-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_06 PARTITION OF transactions FOR VALUES FROM ('2026-06-01 00:00:00+00') TO ('2026-07-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_07 PARTITION OF transactions FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-08-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_08 PARTITION OF transactions FOR VALUES FROM ('2026-08-01 00:00:00+00') TO ('2026-09-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_09 PARTITION OF transactions FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_10 PARTITION OF transactions FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_11 PARTITION OF transactions FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_2026_12 PARTITION OF transactions FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');")
+    op.execute("CREATE TABLE IF NOT EXISTS transactions_default PARTITION OF transactions DEFAULT;")
+
     op.create_index('idx_transactions_user_id_created_at', 'transactions', ['user_id', 'created_at'])
     op.create_index('idx_transactions_device_id', 'transactions', ['device_id'])
     op.create_index('idx_transactions_ip_address', 'transactions', ['ip_address'])
     op.create_index('idx_transactions_created_at', 'transactions', ['created_at'])
-    
-    op.create_foreign_key('fk_transactions_user_id', 'transactions', 'users', ['user_id'], ['id'], ondelete='CASCADE')
-    op.create_foreign_key('fk_transactions_card_id', 'transactions', 'cards', ['card_id'], ['id'], ondelete='CASCADE')
-    op.create_foreign_key('fk_transactions_device_id', 'transactions', 'devices', ['device_id'], ['id'])
 
     # 5. Create fraud_scores table
     op.create_table(
@@ -87,7 +100,6 @@ def upgrade() -> None:
         sa.Column('computed_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False)
     )
     op.create_index('idx_fraud_scores_flagged', 'fraud_scores', ['flagged'])
-    op.create_foreign_key('fk_fraud_scores_transaction_id', 'fraud_scores', 'transactions', ['transaction_id'], ['id'], ondelete='CASCADE')
 
 
 def downgrade() -> None:

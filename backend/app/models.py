@@ -48,7 +48,7 @@ class Transaction(Base):
     merchant = Column(String(100), nullable=False)
     merchant_category = Column(String(50), nullable=False)
     country = Column(String(3), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.datetime.utcnow, server_default=text("now()"), index=True)
+    created_at = Column(DateTime(timezone=True), primary_key=True, default=datetime.datetime.utcnow, server_default=text("now()"), index=True)
     status = Column(String(20), default="approved") # approved, declined
 
     user = relationship("User", back_populates="transactions")

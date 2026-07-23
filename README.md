@@ -83,6 +83,26 @@ In SQL recursive CTEs, `UNION` automatically discards duplicate rows `(start_use
 
 ---
 
+## 📦 PostgreSQL Declarative Table Partitioning (Scale Architecture)
+
+To maintain sub-millisecond execution speeds as transaction volume grows to tens of millions of rows, `transactions` is structured using **PostgreSQL Declarative RANGE Partitioning by Month** (`PARTITION BY RANGE (created_at)`).
+
+### Why Partitioning Matters at Scale:
+
+1. **Partition Pruning (Query Optimization):**
+   When the trigger engine or dashboard queries rolling velocity windows (e.g. `WHERE created_at BETWEEN NOW() - INTERVAL '1 hour' AND NOW()`), PostgreSQL's query planner automatically **prunes** non-matching monthly partitions from the execution tree. Only active monthly partition tables (`transactions_2026_07`, etc.) are scanned, bypassing millions of historical rows.
+
+2. **Instant $O(1)$ Retention & Data Purging:**
+   In financial systems storing massive ledger history, purging old data via `DELETE FROM transactions WHERE created_at < ...` creates extreme Write-Ahead Log (WAL) bloat, long-running row locks, and table fragmentation. With range partitioning, dropping aged data is an instant $O(1)$ DDL command:
+   ```sql
+   DROP TABLE transactions_2025_01; -- Drops gigabytes of historical data in milliseconds with 0 WAL bloat
+   ```
+
+3. **Index Fit in Memory (`shared_buffers`):**
+   Instead of maintaining a massive single B-tree index that exceeds server RAM, each monthly partition maintains isolated, compact indexes. Active monthly indexes fit entirely within PostgreSQL memory buffers, maximizing cache hit ratios for trigger execution.
+
+---
+
 ## 🔐 Authentication & Security
 
 FraudNet protects key analytical API endpoints behind **JWT Bearer Token** authentication.
