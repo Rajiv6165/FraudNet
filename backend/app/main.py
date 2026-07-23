@@ -2,12 +2,13 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 import asyncpg
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
-from app import crud, schemas, database, simulator
+from app import crud, schemas, database, simulator, auth
 
 # WebSocket connection manager to broadcast updates to dashboard clients
 class ConnectionManager:
@@ -122,6 +123,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Authentication endpoint
+@app.post("/auth/token", response_model=auth.Token)
+async def login_for_access_token(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends()
+):
+    """
+    Issues JWT access tokens for valid demo credentials.
+    Supports both JSON payload and OAuth2 Form data.
+    """
+    username = None
+    password = None
+
+    if request.headers.get("content-type") == "application/json":
+        try:
+            body = await request.json()
+            username = body.get("username")
+            password = body.get("password")
+        except Exception:
+            pass
+
+    if not username and form_data:
+        username = form_data.username
+        password = form_data.password
+
+    if username != auth.DEMO_USERNAME or password != auth.DEMO_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = auth.create_access_token(data={"sub": username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 # Ingestion endpoint
 @app.post("/transactions", status_code=status.HTTP_201_CREATED)
 async def create_transaction(tx: schemas.TransactionCreate, db: AsyncSession = Depends(database.get_db)):
@@ -135,11 +171,15 @@ async def create_transaction(tx: schemas.TransactionCreate, db: AsyncSession = D
         "score": schemas.FraudScore.from_orm(db_score) if db_score else None
     }
 
-# Score retrieval endpoint
+# Score retrieval endpoint (Protected behind JWT Bearer token)
 @app.get("/transactions/{id}/score", response_model=schemas.FraudScore)
-async def get_transaction_score(id: str, db: AsyncSession = Depends(database.get_db)):
+async def get_transaction_score(
+    id: str,
+    db: AsyncSession = Depends(database.get_db),
+    current_user: str = Depends(auth.verify_jwt)
+):
     """
-    Returns the computed fraud scores for a specific transaction.
+    Returns the computed fraud scores for a specific transaction. Protected by JWT auth.
     """
     try:
         tx_uuid = UUID(id)
@@ -151,11 +191,14 @@ async def get_transaction_score(id: str, db: AsyncSession = Depends(database.get
         raise HTTPException(status_code=404, detail="Score record not found for this transaction")
     return db_score
 
-# Connected Fraud Rings endpoint
+# Connected Fraud Rings endpoint (Protected behind JWT Bearer token)
 @app.get("/rings", response_model=list[schemas.FraudRing])
-async def get_fraud_rings(db: AsyncSession = Depends(database.get_db)):
+async def get_fraud_rings(
+    db: AsyncSession = Depends(database.get_db),
+    current_user: str = Depends(auth.verify_jwt)
+):
     """
-    Returns active user clusters identified by the recursive CTE ring algorithm.
+    Returns active user clusters identified by the recursive CTE ring algorithm. Protected by JWT auth.
     """
     return await crud.get_fraud_rings(db)
 

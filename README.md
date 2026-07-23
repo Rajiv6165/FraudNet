@@ -83,6 +83,57 @@ In SQL recursive CTEs, `UNION` automatically discards duplicate rows `(start_use
 
 ---
 
+## 🔐 Authentication & Security
+
+FraudNet protects key analytical API endpoints behind **JWT Bearer Token** authentication.
+
+### Demo User Credentials & Environment Variables
+The authentication system supports environment-driven demo credentials and JWT configuration:
+
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `DEMO_USERNAME` | `admin` | Demo login username |
+| `DEMO_PASSWORD` | `fraudnet123` | Demo login password |
+| `JWT_SECRET_KEY` | `fraudnet-secret-key-change-in-production` | Secret key used to sign JWTs |
+| `JWT_ALGORITHM` | `HS256` | Algorithm used for JWT encoding |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token expiration time in minutes |
+
+### Obtaining an Access Token
+Send a `POST` request to `/auth/token` with valid credentials:
+
+```bash
+# Via JSON payload
+curl -X POST "http://localhost:8000/auth/token" \
+     -H "Content-Type: application/json" \
+     -d '{"username": "admin", "password": "fraudnet123"}'
+
+# Via OAuth2 Form Data
+curl -X POST "http://localhost:8000/auth/token" \
+     -d "username=admin&password=fraudnet123"
+```
+
+**Response:**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1Ni...",
+  "token_type": "bearer"
+}
+```
+
+### Accessing Protected Endpoints
+Protected endpoints require passing the JWT token in the `Authorization` header:
+
+* `GET /rings` — Retrieves active user clusters identified by the recursive CTE ring algorithm.
+* `GET /transactions/{id}/score` — Retrieves the detailed composite risk score breakdown for a transaction.
+
+```bash
+# Access protected rings endpoint
+curl -X GET "http://localhost:8000/rings" \
+     -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
+```
+
+---
+
 ## 🚀 Local Quickstart
 
 ### Prerequisites

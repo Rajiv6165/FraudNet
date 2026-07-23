@@ -18,14 +18,39 @@ export default function App() {
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
 
+  const tokenRef = useRef(null);
+
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
   const WS_URL = API_URL.replace(/^http/, 'ws');
+
+  // Obtain auth token for protected API calls
+  const getAuthToken = async () => {
+    if (tokenRef.current) return tokenRef.current;
+    try {
+      const res = await fetch(`${API_URL}/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'fraudnet123' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        tokenRef.current = data.access_token;
+        return data.access_token;
+      }
+    } catch (err) {
+      console.error('Error obtaining auth token:', err);
+    }
+    return null;
+  };
 
   // Fetch initial dashboard state
   const fetchDashboardData = async () => {
     try {
+      const token = await getAuthToken();
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
       const [resRings, resMetrics] = await Promise.all([
-        fetch(`${API_URL}/rings`),
+        fetch(`${API_URL}/rings`, { headers }),
         fetch(`${API_URL}/dashboard/metrics`)
       ]);
       if (resRings.ok) {
