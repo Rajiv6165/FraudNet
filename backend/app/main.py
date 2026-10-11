@@ -126,8 +126,7 @@ app.add_middleware(
 # Authentication endpoint
 @app.post("/auth/token", response_model=auth.Token)
 async def login_for_access_token(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends()
+    request: Request
 ):
     """
     Issues JWT access tokens for valid demo credentials.
@@ -136,17 +135,34 @@ async def login_for_access_token(
     username = None
     password = None
 
-    if request.headers.get("content-type") == "application/json":
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
         try:
             body = await request.json()
             username = body.get("username")
             password = body.get("password")
         except Exception:
             pass
-
-    if not username and form_data:
-        username = form_data.username
-        password = form_data.password
+    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        try:
+            form_data = await request.form()
+            username = form_data.get("username")
+            password = form_data.get("password")
+        except Exception:
+            pass
+    else:
+        # Fallback attempt
+        try:
+            body = await request.json()
+            username = body.get("username")
+            password = body.get("password")
+        except Exception:
+            try:
+                form_data = await request.form()
+                username = form_data.get("username")
+                password = form_data.get("password")
+            except Exception:
+                pass
 
     if username != auth.DEMO_USERNAME or password != auth.DEMO_PASSWORD:
         raise HTTPException(

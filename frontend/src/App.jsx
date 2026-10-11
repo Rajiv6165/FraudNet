@@ -24,8 +24,8 @@ export default function App() {
   const WS_URL = API_URL.replace(/^http/, 'ws');
 
   // Obtain auth token for protected API calls
-  const getAuthToken = async () => {
-    if (tokenRef.current) return tokenRef.current;
+  const getAuthToken = async (forceRefresh = false) => {
+    if (tokenRef.current && !forceRefresh) return tokenRef.current;
     try {
       const res = await fetch(`${API_URL}/auth/token`, {
         method: 'POST',
@@ -36,6 +36,8 @@ export default function App() {
         const data = await res.json();
         tokenRef.current = data.access_token;
         return data.access_token;
+      } else {
+        console.error('Failed to obtain auth token, status:', res.status);
       }
     } catch (err) {
       console.error('Error obtaining auth token:', err);
@@ -46,17 +48,33 @@ export default function App() {
   // Fetch initial dashboard state
   const fetchDashboardData = async () => {
     try {
-      const token = await getAuthToken();
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      let token = await getAuthToken();
+      let headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-      const [resRings, resMetrics] = await Promise.all([
+      let [resRings, resMetrics] = await Promise.all([
         fetch(`${API_URL}/rings`, { headers }),
         fetch(`${API_URL}/dashboard/metrics`)
       ]);
+
+      // If token expired or unauthorized, attempt refreshing token once
+      if (resRings.status === 401) {
+        console.warn('Received 401 Unauthorized for /rings. Refreshing token...');
+        tokenRef.current = null;
+        token = await getAuthToken(true);
+        if (token) {
+          headers = { 'Authorization': `Bearer ${token}` };
+          resRings = await fetch(`${API_URL}/rings`, { headers });
+        }
+      }
+
       if (resRings.ok) {
         const ringsData = await resRings.json();
-        setRings(ringsData);
+        setRings(Array.isArray(ringsData) ? ringsData : []);
+      } else {
+        console.error('Error response from /rings:', resRings.status, resRings.statusText);
+        setRings([]);
       }
+
       if (resMetrics.ok) {
         const metricsData = await resMetrics.json();
         setMetrics(metricsData);
