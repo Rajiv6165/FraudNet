@@ -29,12 +29,18 @@ def get_url():
     # Prefer SYNC_DATABASE_URL environment variable if set
     url = os.getenv("SYNC_DATABASE_URL")
     if url:
+        if url.startswith("postgresql+asyncpg://"):
+            url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
         return url
-    # Fallback to database URL (replacing postgresql+asyncpg with postgresql)
+    # Fallback to database URL (replacing postgresql+asyncpg with postgresql+psycopg2)
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         if db_url.startswith("postgresql+asyncpg://"):
-            db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+            db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
         return db_url
     return config.get_main_option("sqlalchemy.url")
 
