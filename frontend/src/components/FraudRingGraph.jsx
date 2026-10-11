@@ -261,7 +261,7 @@ export default function FraudRingGraph({ rings, transactions }) {
             <GitBranch className="brand-icon" style={{ color: 'var(--color-danger)' }} />
             Fraud Ring Graph
           </h2>
-          <span className="panel-subtitle">Recursive attribute linking (device, IP, card) forming threat clusters</span>
+          <span className="panel-subtitle">Recursive attribute linking (device, IP) forming threat clusters</span>
         </div>
       </div>
 

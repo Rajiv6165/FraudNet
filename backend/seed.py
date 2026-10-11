@@ -61,9 +61,9 @@ def seed_db():
     )
     db.commit()
 
-    # 2. Generate Devices (about 4,500 unique devices for 5,000 users)
+    # 2. Generate Devices (5,000 unique devices for 5,000 users)
     print("Creating devices...")
-    device_fingerprints = [fake.sha256() for _ in range(4500)]
+    device_fingerprints = [fake.sha256() for _ in range(5000)]
     device_insert_data = []
     for i, fp in enumerate(device_fingerprints):
         device_insert_data.append({
@@ -78,15 +78,10 @@ def seed_db():
     )
     db.commit()
 
-    # Assign devices to users
+    # Assign dedicated devices to normal users
     user_devices = {}
     for uid in range(1, 5001):
-        # 90% of users have a dedicated device, 10% share
-        if random.random() < 0.9:
-            dev_idx = (uid - 1) % len(device_fingerprints)
-        else:
-            dev_idx = random.randint(0, len(device_fingerprints) - 1)
-        user_devices[uid] = f"dev_{dev_idx+1}"
+        user_devices[uid] = f"dev_{uid}"
 
     # 3. Generate Cards (about 5,500 cards for 5,000 users)
     print("Creating credit cards...")
